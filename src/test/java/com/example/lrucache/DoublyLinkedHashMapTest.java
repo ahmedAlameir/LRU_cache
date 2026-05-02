@@ -7,131 +7,129 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import org.junit.jupiter.api.Test;
 
 final class DoublyLinkedHashMapTest {
-  @Test
-  void putNewKeyReturnsNullAndIsHead() {
-    DoublyLinkedHashMap<String, Integer> map = new DoublyLinkedHashMap<>();
+    @Test
+    void putNewKeyReturnsNullAndIsHead() {
+        DoublyLinkedHashMap<String, Integer> map = new DoublyLinkedHashMap<>();
+        assertNull(map.put("a", 1));
+        DoublyLinkedHashMap.Node<String, Integer> head = map.peekFirst();
+        assertNotNull(head);
+        assertEquals("a", head.key);
+    }
 
-    assertNull(map.put("a", 1));
+    @Test
+    void putExistingKeyReturnsOldAndMovesToHead() {
+        DoublyLinkedHashMap<String, String> map = new DoublyLinkedHashMap<>();
 
-    DoublyLinkedHashMap.Node<String, Integer> head = map.peekFirst();
-    assertNotNull(head);
-    assertEquals("a", head.key);
-  }
+        assertNull(map.put("key", "v1"));
+        assertNull(map.put("other", "v3"));
 
-  @Test
-  void putExistingKeyReturnsOldAndMovesToHead() {
-    DoublyLinkedHashMap<String, String> map = new DoublyLinkedHashMap<>();
+        assertEquals("v1", map.put("key", "v2"));
+        assertEquals("key", map.peekFirst().key);
+        assertEquals("other", map.peekLast().key);
+    }
 
-    assertNull(map.put("key", "v1"));
-    assertNull(map.put("other", "v3"));
+    @Test
+    void getMissingReturnsNull() {
+        DoublyLinkedHashMap<String, Integer> map = new DoublyLinkedHashMap<>();
 
-    assertEquals("v1", map.put("key", "v2"));
-    assertEquals("key", map.peekFirst().key);
-    assertEquals("other", map.peekLast().key);
-  }
+        assertNull(map.get("missing"));
+    }
 
-  @Test
-  void getMissingReturnsNull() {
-    DoublyLinkedHashMap<String, Integer> map = new DoublyLinkedHashMap<>();
+    @Test
+    void getExistingReturnsValueDoesNotMoveToFront() {
+        DoublyLinkedHashMap<String, Integer> map = new DoublyLinkedHashMap<>();
 
-    assertNull(map.get("missing"));
-  }
+        map.put("a", 1);
+        map.put("b", 2);
 
-  @Test
-  void getExistingReturnsValueDoesNotMoveToFront() {
-    DoublyLinkedHashMap<String, Integer> map = new DoublyLinkedHashMap<>();
+        assertEquals("b", map.peekFirst().key);
+        assertEquals("a", map.peekLast().key);
 
-    map.put("a", 1);
-    map.put("b", 2);
+        assertEquals(1, map.get("a"));
 
-    assertEquals("b", map.peekFirst().key);
-    assertEquals("a", map.peekLast().key);
+        assertEquals("b", map.peekFirst().key);
+        assertEquals("a", map.peekLast().key);
+    }
 
-    assertEquals(1, map.get("a"));
+    @Test
+    void moveToFrontMakesNodeHead() {
+        DoublyLinkedHashMap<String, Integer> map = new DoublyLinkedHashMap<>();
 
-    assertEquals("b", map.peekFirst().key);
-    assertEquals("a", map.peekLast().key);
-  }
+        map.put("a", 1);
+        map.put("b", 2);
+        map.put("c", 3);
 
-  @Test
-  void moveToFrontMakesNodeHead() {
-    DoublyLinkedHashMap<String, Integer> map = new DoublyLinkedHashMap<>();
+        DoublyLinkedHashMap.Node<String, Integer> last = map.peekLast();
+        assertNotNull(last);
+        assertEquals("a", last.key);
 
-    map.put("a", 1);
-    map.put("b", 2);
-    map.put("c", 3);
+        map.moveToFront(last.key);
+        assertEquals("a", map.peekFirst().key);
+    }
 
-    DoublyLinkedHashMap.Node<String, Integer> last = map.peekLast();
-    assertNotNull(last);
-    assertEquals("a", last.key);
+    @Test
+    void removeExistingReturnsValueAndUnlinksNode() {
+        DoublyLinkedHashMap<String, Integer> map = new DoublyLinkedHashMap<>();
 
-    map.moveToFront(last);
-    assertEquals("a", map.peekFirst().key);
-  }
+        map.put("a", 1);
+        map.put("b", 2);
 
-  @Test
-  void removeExistingReturnsValueAndUnlinksNode() {
-    DoublyLinkedHashMap<String, Integer> map = new DoublyLinkedHashMap<>();
+        assertEquals(1, map.remove("a"));
+        assertFalse(map.containsKey("a"));
+        assertEquals(1, map.size());
+        assertEquals("b", map.peekFirst().key);
+        assertEquals("b", map.peekLast().key);
+    }
 
-    map.put("a", 1);
-    map.put("b", 2);
+    @Test
+    void removeLastOnEmptyIsNoOp() {
+        DoublyLinkedHashMap<String, Integer> map = new DoublyLinkedHashMap<>();
 
-    assertEquals(1, map.remove("a"));
-    assertFalse(map.containsKey("a"));
-    assertEquals(1, map.size());
-    assertEquals("b", map.peekFirst().key);
-    assertEquals("b", map.peekLast().key);
-  }
+        map.removeLast();
 
-  @Test
-  void removeLastOnEmptyIsNoOp() {
-    DoublyLinkedHashMap<String, Integer> map = new DoublyLinkedHashMap<>();
+        assertEquals(0, map.size());
+        assertNull(map.peekFirst());
+        assertNull(map.peekLast());
+    }
 
-    map.removeLast();
+    @Test
+    void removeLastRemovesTailAndPeekLastNullAfter() {
+        DoublyLinkedHashMap<String, Integer> map = new DoublyLinkedHashMap<>();
 
-    assertEquals(0, map.size());
-    assertNull(map.peekFirst());
-    assertNull(map.peekLast());
-  }
+        map.put("a", 1);
 
-  @Test
-  void removeLastRemovesTailAndPeekLastNullAfter() {
-    DoublyLinkedHashMap<String, Integer> map = new DoublyLinkedHashMap<>();
+        DoublyLinkedHashMap.Node<String, Integer> last = map.peekLast();
+        assertNotNull(last);
+        assertEquals("a", last.key);
 
-    map.put("a", 1);
+        map.removeLast();
+        assertFalse(map.containsKey("a"));
+        assertNull(map.peekLast());
+    }
 
-    DoublyLinkedHashMap.Node<String, Integer> last = map.peekLast();
-    assertNotNull(last);
-    assertEquals("a", last.key);
+    @Test
+    void clearResetsState() {
+        DoublyLinkedHashMap<String, Integer> map = new DoublyLinkedHashMap<>();
 
-    map.removeLast();
-    assertFalse(map.containsKey("a"));
-    assertNull(map.peekLast());
-  }
+        map.put("a", 1);
+        map.put("b", 2);
 
-  @Test
-  void clearResetsState() {
-    DoublyLinkedHashMap<String, Integer> map = new DoublyLinkedHashMap<>();
+        map.clear();
 
-    map.put("a", 1);
-    map.put("b", 2);
+        assertEquals(0, map.size());
+        assertNull(map.peekLast());
+        assertNull(map.peekFirst());
+    }
 
-    map.clear();
+    @Test
+    void orderAfterMultiplePutsMatchesHeadAndTail() {
+        DoublyLinkedHashMap<String, Integer> map = new DoublyLinkedHashMap<>();
 
-    assertEquals(0, map.size());
-    assertNull(map.peekLast());
-    assertNull(map.peekFirst());
-  }
+        map.put("a", 1);
+        map.put("b", 2);
+        map.put("c", 3);
 
-  @Test
-  void orderAfterMultiplePutsMatchesHeadAndTail() {
-    DoublyLinkedHashMap<String, Integer> map = new DoublyLinkedHashMap<>();
-
-    map.put("a", 1);
-    map.put("b", 2);
-    map.put("c", 3);
-
-    assertEquals("c", map.peekFirst().key);
-    assertEquals("a", map.peekLast().key);
-  }
+        assertEquals("c", map.peekFirst().key);
+        assertEquals("a", map.peekLast().key);
+    }
 }

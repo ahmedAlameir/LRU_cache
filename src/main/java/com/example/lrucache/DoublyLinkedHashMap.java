@@ -73,9 +73,12 @@ final class DoublyLinkedHashMap<K, V> {
         index.remove(last.key);
     }
 
-    void moveToFront(Node<K, V> node) {
-        unlink(node);
-        addToFront(node);
+    void moveToFront(K key) {
+        Node<K, V> node = index.get(key);
+        if (node != null) {
+            unlink(node);
+            addToFront(node);
+        }
     }
 
     Node<K, V> peekLast() {
