@@ -3,6 +3,7 @@ package com.example.lrucache;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.BiConsumer;
 
 final class DoublyLinkedHashMap<K, V> {
     private final Map<K, Node<K, V>> index;
@@ -70,13 +71,14 @@ final class DoublyLinkedHashMap<K, V> {
         tail.prev = head;
     }
 
-    void removeLast() {
+    K removeLast() {
         if (tail.prev == head) {
-            return;
+            return null;
         }
         Node<K, V> last = tail.prev;
         unlink(last);
         index.remove(last.key);
+        return last.key;
     }
 
     void moveToFront(K key) {
@@ -90,12 +92,16 @@ final class DoublyLinkedHashMap<K, V> {
     Node<K, V> peekLast() {
         return tail.prev == head ? null : tail.prev;
     }
-
+  
+    V peekLastValue() {
+        Node<K, V> last = tail.prev == head ? null : tail.prev;
+        return last == null ? null : last.value;
+    }
     Node<K, V> peekFirst() {
         return head.next == tail ? null : head.next;
     }
 
-    int removeExpired(long nowNanos) {
+    int removeExpired(long nowNanos , BiConsumer<K, V> onEvict) {
         int removed = 0;
         Node<K, V> current = tail.prev;
         while (current != head) {
@@ -103,6 +109,7 @@ final class DoublyLinkedHashMap<K, V> {
             if (current.expiryNanos > 0L && current.expiryNanos <= nowNanos) {
                 index.remove(current.key);
                 unlink(current);
+                onEvict.accept(current.key, current.value);
                 removed++;
             }
             current = prev;

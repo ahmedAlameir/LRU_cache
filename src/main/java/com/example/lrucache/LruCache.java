@@ -1,10 +1,13 @@
 package com.example.lrucache;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.StampedLock;
+import java.util.function.BiConsumer;
 
 public final class LruCache<K, V> implements AutoCloseable {
     private static final long DEFAULT_SWEEP_MILLIS = 1000L;
@@ -12,14 +15,20 @@ public final class LruCache<K, V> implements AutoCloseable {
     private final DoublyLinkedHashMap<K, V> map;
     private final StampedLock lock;
     private final ScheduledExecutorService scheduler;
+    private final EvictionListener<? super K, ? super V> evictionListener;
 
     public LruCache(int capacity) {
+        this(capacity, null);
+    }
+
+    public LruCache(int capacity, EvictionListener<? super K, ? super V> evictionListener) {
         if (capacity <= 0) {
             throw new IllegalArgumentException("capacity must be positive");
         }
         this.capacity = capacity;
         this.map = new DoublyLinkedHashMap<>();
         this.lock = new StampedLock();
+        this.evictionListener = evictionListener;
         this.scheduler = Executors.newSingleThreadScheduledExecutor(
                 Thread.ofVirtual().name("lru-expirer-", 0).factory());
         this.scheduler.scheduleAtFixedRate(
@@ -30,19 +39,26 @@ public final class LruCache<K, V> implements AutoCloseable {
     }
 
     public V get(K key) {
+        V value;
+        V evictedValue = null;
         long stamp = lock.writeLock();
         try {
             if (map.isExpired(key, System.nanoTime())) {
-                map.remove(key);
-                return null;
+                evictedValue = map.remove(key);
+                value = null;
+            } else {
+                value = map.get(key);
+                if (value != null) {
+                    map.moveToFront(key);
+                }
             }
-            V value = map.get(key);
-            if (value != null)
-                map.moveToFront(key);
-            return value;
         } finally {
             lock.unlockWrite(stamp);
         }
+        if (evictedValue != null) {
+            notifyEviction(key, evictedValue, EvictionListener.EvictionReason.EXPIRED);
+        }
+        return value;
     }
 
     public void put(K key, V value) {
@@ -69,23 +85,35 @@ public final class LruCache<K, V> implements AutoCloseable {
 
     private void putWithExpiry(K key, V value, long expiryNanos) {
         long stamp = lock.writeLock();
+        V evictedValue = null;
+        K evictedKey = null;
+
         try {
             if (map.size() >= capacity && !map.containsKey(key)) {
-                map.removeLast();
+               evictedValue = map.peekLastValue();
+                evictedKey = map.removeLast();
             }
             map.put(key, value, expiryNanos);
         } finally {
             lock.unlockWrite(stamp);
         }
+        if (evictedValue != null) {
+            notifyEviction(evictedKey, evictedValue, EvictionListener.EvictionReason.CAPACITY);
+        }
     }
 
     public V remove(K key) {
+        V value;
         long stamp = lock.writeLock();
         try {
-            return map.remove(key);
+            value = map.remove(key);
         } finally {
             lock.unlockWrite(stamp);
         }
+        if (value != null) {
+            notifyEviction(key, value, EvictionListener.EvictionReason.MANUAL);
+        }
+        return value;
     }
 
     public int size() {
@@ -133,15 +161,29 @@ public final class LruCache<K, V> implements AutoCloseable {
     }
 
     private void expireEntries() {
-        // Try to acquire the write lock without blocking to avoid contention with active operations.
+        var keys = new ArrayList<K>();
+        var values = new ArrayList<V>();
         long stamp = lock.tryWriteLock();
-        if (stamp == 0L) {
+        if (stamp == 0L)
             return;
-        }
         try {
-            map.removeExpired(System.nanoTime());
+            map.removeExpired(System.nanoTime(), (k, v) -> {
+                keys.add(k);
+                values.add(v);
+            });
         } finally {
             lock.unlockWrite(stamp);
         }
+        for (int i = 0; i < keys.size(); i++) {
+            notifyEviction(keys.get(i), values.get(i), EvictionListener.EvictionReason.EXPIRED);
+        }
+    }
+
+    private void notifyEviction(K key, V value, EvictionListener.EvictionReason reason) {
+        if (evictionListener == null)
+            return;
+        Thread.ofVirtual()
+                .name("lru-eviction-", 0)
+                .start(() -> evictionListener.onEvict(key, value, reason));
     }
 }
