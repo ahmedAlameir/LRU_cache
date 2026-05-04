@@ -34,16 +34,22 @@ final class DoublyLinkedHashMap<K, V> {
     }
 
     V put(K key, V value) {
+        return put(key, value, 0L);
+    }
+
+    V put(K key, V value, long expiryNanos) {
         Objects.requireNonNull(key, "key");
         Node<K, V> existing = index.get(key);
         if (existing != null) {
             V oldValue = existing.value;
             existing.value = value;
+            existing.expiryNanos = expiryNanos;
             unlink(existing);
-            addToFront(existing);           
+            addToFront(existing);
             return oldValue;
         }
         Node<K, V> node = new Node<>(key, value);
+        node.expiryNanos = expiryNanos;
         index.put(key, node);
         addToFront(node);
         return null;
@@ -89,6 +95,27 @@ final class DoublyLinkedHashMap<K, V> {
         return head.next == tail ? null : head.next;
     }
 
+    int removeExpired(long nowNanos) {
+        int removed = 0;
+        Node<K, V> current = tail.prev;
+        while (current != head) {
+            Node<K, V> prev = current.prev;
+            if (current.expiryNanos > 0L && current.expiryNanos <= nowNanos) {
+                index.remove(current.key);
+                unlink(current);
+                removed++;
+            }
+            current = prev;
+        }
+        return removed;
+    }
+
+    boolean isExpired(K key, long nowNanos) {
+        Node<K, V> node = index.get(key);
+        if (node == null)
+            return false;
+        return node.expiryNanos > 0 && nowNanos > node.expiryNanos;
+    }
     private void addToFront(Node<K, V> node) {
         Node<K, V> first = head.next;
         head.next = node;
