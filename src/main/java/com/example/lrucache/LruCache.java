@@ -1,21 +1,33 @@
 package com.example.lrucache;
 
+import java.lang.management.ManagementFactory;
 import java.util.ArrayList;
-import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.concurrent.locks.StampedLock;
-import java.util.function.BiConsumer;
+import javax.management.InstanceAlreadyExistsException;
+import javax.management.InstanceNotFoundException;
+import javax.management.MBeanRegistrationException;
+import javax.management.MBeanServer;
+import javax.management.MalformedObjectNameException;
+import javax.management.NotCompliantMBeanException;
+import javax.management.ObjectName;
 
-public final class LruCache<K, V> implements AutoCloseable {
+public final class LruCache<K, V> implements AutoCloseable, CacheMXBean {
     private static final long DEFAULT_SWEEP_MILLIS = 1000L;
     private final int capacity;
     private final DoublyLinkedHashMap<K, V> map;
     private final StampedLock lock;
     private final ScheduledExecutorService scheduler;
     private final EvictionListener<? super K, ? super V> evictionListener;
+    private final LongAdder hits;
+    private final LongAdder misses;
+    private final LongAdder evictions;
+    private final MBeanServer mbeanServer;
+    private final ObjectName mbeanName;
 
     public LruCache(int capacity) {
         this(capacity, null);
@@ -29,6 +41,10 @@ public final class LruCache<K, V> implements AutoCloseable {
         this.map = new DoublyLinkedHashMap<>();
         this.lock = new StampedLock();
         this.evictionListener = evictionListener;
+        this.hits = new LongAdder();
+        this.misses = new LongAdder();
+        this.evictions = new LongAdder();
+        this.mbeanServer = ManagementFactory.getPlatformMBeanServer();
         this.scheduler = Executors.newSingleThreadScheduledExecutor(
                 Thread.ofVirtual().name("lru-expirer-", 0).factory());
         this.scheduler.scheduleAtFixedRate(
@@ -36,6 +52,12 @@ public final class LruCache<K, V> implements AutoCloseable {
                 DEFAULT_SWEEP_MILLIS,
                 DEFAULT_SWEEP_MILLIS,
                 TimeUnit.MILLISECONDS);
+        try {
+            this.mbeanName = registerMBean();
+        } catch (RuntimeException ex) {
+            scheduler.shutdown();
+            throw ex;
+        }
     }
 
     public V get(K key) {
@@ -55,7 +77,13 @@ public final class LruCache<K, V> implements AutoCloseable {
         } finally {
             lock.unlockWrite(stamp);
         }
+        if (value == null) {
+            misses.increment();
+        } else {
+            hits.increment();
+        }
         if (evictedValue != null) {
+            evictions.increment();
             notifyEviction(key, evictedValue, EvictionListener.EvictionReason.EXPIRED);
         }
         return value;
@@ -98,6 +126,7 @@ public final class LruCache<K, V> implements AutoCloseable {
             lock.unlockWrite(stamp);
         }
         if (evictedValue != null) {
+            evictions.increment();
             notifyEviction(evictedKey, evictedValue, EvictionListener.EvictionReason.CAPACITY);
         }
     }
@@ -111,6 +140,7 @@ public final class LruCache<K, V> implements AutoCloseable {
             lock.unlockWrite(stamp);
         }
         if (value != null) {
+            evictions.increment();
             notifyEviction(key, value, EvictionListener.EvictionReason.MANUAL);
         }
         return value;
@@ -131,14 +161,18 @@ public final class LruCache<K, V> implements AutoCloseable {
     }
 
     public void clear() {
+        int cleared;
         long stamp = lock.writeLock();
         try {
+            cleared = map.size();
             map.clear();
         } finally {
             lock.unlockWrite(stamp);
         }
+        if (cleared > 0)
+            evictions.add(cleared);
     }
-
+    
     @Override
     public void close() {
         scheduler.shutdown();
@@ -149,6 +183,11 @@ public final class LruCache<K, V> implements AutoCloseable {
         } catch (InterruptedException e) {
             scheduler.shutdownNow();
             Thread.currentThread().interrupt();
+        }
+        try {
+            mbeanServer.unregisterMBean(mbeanName);
+        } catch (InstanceNotFoundException | MBeanRegistrationException ignored) {
+            // Ignore if the bean was already unregistered.
         }
     }
 
@@ -175,8 +214,37 @@ public final class LruCache<K, V> implements AutoCloseable {
             lock.unlockWrite(stamp);
         }
         for (int i = 0; i < keys.size(); i++) {
+            evictions.increment();
             notifyEviction(keys.get(i), values.get(i), EvictionListener.EvictionReason.EXPIRED);
         }
+    }
+
+    @Override
+    public long getHits() {
+        return hits.sum();
+    }
+
+    @Override
+    public long getMisses() {
+        return misses.sum();
+    }
+
+    @Override
+    public long getEvictions() {
+        return evictions.sum();
+    }
+
+    @Override
+    public int getSize() {
+        return size();
+    }
+
+    @Override
+    public double getHitRatio() {
+        long hitCount = hits.sum();
+        long missCount = misses.sum();
+        long total = hitCount + missCount;
+        return total == 0 ? 0.0 : (double) hitCount / total;
     }
 
     private void notifyEviction(K key, V value, EvictionListener.EvictionReason reason) {
@@ -185,5 +253,17 @@ public final class LruCache<K, V> implements AutoCloseable {
         Thread.ofVirtual()
                 .name("lru-eviction-", 0)
                 .start(() -> evictionListener.onEvict(key, value, reason));
+    }
+
+    private ObjectName registerMBean() {
+        try {
+            ObjectName name = new ObjectName("com.example.lrucache:type=LruCache,name="
+                    + Integer.toHexString(System.identityHashCode(this)));
+            mbeanServer.registerMBean(this, name);
+            return name;
+        } catch (MalformedObjectNameException | InstanceAlreadyExistsException
+                 | MBeanRegistrationException | NotCompliantMBeanException e) {
+            throw new IllegalStateException("Failed to register cache MBean", e);
+        }
     }
 }
